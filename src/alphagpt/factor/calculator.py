@@ -71,10 +71,60 @@ class FactorCalculator:
         return expr
 
     @staticmethod
+    def _find_matching_paren(expr: str, start: int) -> int:
+        """
+        找到与start位置的左括号匹配的右括号位置
+
+        Args:
+            expr: 表达式字符串
+            start: 左括号的位置
+
+        Returns:
+            匹配的右括号位置，如果没找到返回-1
+        """
+        if start >= len(expr) or expr[start] != '(':
+            return -1
+
+        depth = 1
+        i = start + 1
+        while i < len(expr) and depth > 0:
+            if expr[i] == '(':
+                depth += 1
+            elif expr[i] == ')':
+                depth -= 1
+            i += 1
+
+        return i - 1 if depth == 0 else -1
+
+    @staticmethod
+    def _find_comma_at_depth(expr: str, start: int, end: int) -> int:
+        """
+        在指定范围内找到深度为0的逗号位置
+
+        Args:
+            expr: 表达式字符串
+            start: 搜索起始位置
+            end: 搜索结束位置
+
+        Returns:
+            逗号位置，如果没找到返回-1
+        """
+        depth = 0
+        for i in range(start, end):
+            if expr[i] == '(':
+                depth += 1
+            elif expr[i] == ')':
+                depth -= 1
+            elif expr[i] == ',' and depth == 0:
+                return i
+        return -1
+
+    @staticmethod
     def _convert_prefix_notation(expr: str) -> str:
         """
         将前缀表示法转换为中缀表示法
         例如: +(a, b) -> (a + b)
+        支持嵌套表达式如: /(a, +(b, c)) -> (a / (b + c))
 
         Args:
             expr: 可能包含前缀表示法的表达式
@@ -88,16 +138,48 @@ class FactorCalculator:
         for _ in range(max_iterations):
             found = False
             for op_char, op_symbol in prefix_ops.items():
-                escaped_op = re.escape(op_char)
-                pattern = rf'{escaped_op}\(([^(),]+),\s*([^()]+)\)'
-                match = re.search(pattern, expr)
-                if match:
-                    arg1 = match.group(1).strip()
-                    arg2 = match.group(2).strip()
+                # 查找 op_char( 的位置
+                i = 0
+                while i < len(expr):
+                    # 找到操作符后跟左括号的位置
+                    op_pos = expr.find(op_char + '(', i)
+                    if op_pos == -1:
+                        break
+
+                    # 确保这是前缀操作符（前面不是字母数字或下划线）
+                    if op_pos > 0 and (expr[op_pos - 1].isalnum() or expr[op_pos - 1] == '_'):
+                        i = op_pos + 1
+                        continue
+
+                    paren_start = op_pos + 1
+                    paren_end = FactorCalculator._find_matching_paren(expr, paren_start)
+
+                    if paren_end == -1:
+                        i = op_pos + 1
+                        continue
+
+                    # 在括号内找到分隔两个参数的逗号
+                    comma_pos = FactorCalculator._find_comma_at_depth(
+                        expr, paren_start + 1, paren_end
+                    )
+
+                    if comma_pos == -1:
+                        i = op_pos + 1
+                        continue
+
+                    # 提取两个参数
+                    arg1 = expr[paren_start + 1:comma_pos].strip()
+                    arg2 = expr[comma_pos + 1:paren_end].strip()
+
+                    # 构建替换字符串
                     replacement = f'({arg1} {op_symbol} {arg2})'
-                    expr = expr[:match.start()] + replacement + expr[match.end():]
+                    expr = expr[:op_pos] + replacement + expr[paren_end + 1:]
                     found = True
                     break
+
+                if found:
+                    break
+
             if not found:
                 break
 
