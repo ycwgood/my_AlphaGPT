@@ -27,7 +27,7 @@ def ensure_output_dir(output_dir: str = "results") -> str:
 
 def create_run_output_dir(
     base_dir: str = "results",
-    ts_codes: Optional[List[str]] = None,
+    codes: Optional[List[str]] = None,
     date_str: Optional[str] = None
 ) -> str:
     """
@@ -48,11 +48,11 @@ def create_run_output_dir(
         date_str = datetime.now().strftime("%Y-%m-%d")
 
     # 创建股票代码标签
-    if ts_codes:
-        if len(ts_codes) <= 3:
-            stock_label = "_".join(ts_codes)
+    if codes:
+        if len(codes) <= 3:
+            stock_label = "_".join(codes)
         else:
-            stock_label = f"{len(ts_codes)}stocks"
+            stock_label = f"{len(codes)}stocks"
     else:
         stock_label = "unknown"
 

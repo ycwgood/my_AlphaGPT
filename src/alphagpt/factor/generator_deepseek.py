@@ -8,44 +8,34 @@ import numpy as np
 import numexpr as ne
 from typing import List, Dict, Optional
 
+from ..api import DeepSeekClient
 from .operators import FactorOperators
 from .calculator import FactorCalculator
 from ..utils.exceptions import FactorGenerationError
-
-from google import genai
 
 logger = logging.getLogger(__name__)
 
 
 class FactorGenerator:
-    """Generate quantitative factors using Gemini API"""
+    """Generate quantitative factors using DeepSeek API"""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "gemini-2.0-flash",
-        temperature: float = 0.7,
-        proxy: Optional[str] = None
+        base_url: str = "https://api.deepseek.com",
+        model: str = "deepseek-chat",
+        use_api: bool = True
     ):
         """
         Initialize factor generator
 
         Args:
-            api_key: API key for Gemini
+            api_key: API key for DeepSeek
+            base_url: API base URL
             model: Model name
-            temperature: Temperature for API calls
+            use_api: Whether to use API or local generation
         """
-        # 设置代理
-        if proxy is not None:
-            print(f'配置代理服务器: {proxy}')
-            import os
-            os.environ["http_proxy"] = proxy
-            os.environ["https_proxy"] = proxy
-            
-        print(f'设置gemini api key: {api_key}')
-        self.api_client = genai.Client(api_key=api_key)
-        self.model = model
-        self.proxy = proxy
+        self.api_client = DeepSeekClient(api_key, base_url, model, use_api)
         self.ops = FactorOperators.get_operators()
         self.generated_factors_cache: List[str] = []
         self._factor_values_cache: Dict[str, np.ndarray] = {}
@@ -277,7 +267,7 @@ class FactorGenerator:
 """
         return prompt
 
-    def generate_factors_with_gemini(
+    def generate_factors_with_deepseek(
         self,
         features: List[str],
         max_seq_len: int = 6,
@@ -285,7 +275,7 @@ class FactorGenerator:
         num_factors: int = 10
     ) -> List[str]:
         """
-        Generate factors using Gemini API
+        Generate factors using DeepSeek API
 
         Args:
             features: List of feature names
@@ -302,14 +292,11 @@ class FactorGenerator:
         prompt = self._build_prompt(features, max_seq_len, min_op_count, num_factors)
 
         # Call API
-        logger.info("调用Gemini生成因子组合...")
-        api_response = self.api_client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-        )
+        logger.info("调用DeepSeek生成因子组合...")
+        api_response = self.api_client.call_api(prompt)
 
         if not api_response:
-            logger.error("Gemini API调用失败，使用本地生成器")
+            logger.error("DeepSeek API调用失败，使用本地生成器")
             return self.generate_factors_local(features, num_factors)
 
         # Parse generated factors
@@ -337,5 +324,5 @@ class FactorGenerator:
                 logger.error(f"因子验证时发生未预期错误：{expr}，错误：{e}")
                 continue
 
-        logger.info(f"Gemini生成了{len(valid_factors)}个有效因子表达式")
+        logger.info(f"DeepSeek生成了{len(valid_factors)}个有效因子表达式")
         return valid_factors[:num_factors] if valid_factors else self.generate_factors_local(features, num_factors)

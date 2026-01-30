@@ -27,21 +27,20 @@ def load_and_merge_multiple_stocks(config, logger):
     Returns:
         合并后的DataFrame
     """
-    print(f"\n正在加载 {len(config.ts_codes)} 个标的的数据...")
+    print(f"\n正在加载 {len(config.codes)} 个标的的数据...")
 
     # 批量加载多个股票数据
     stock_data_dict = DataLoader.get_multiple_price_data(
-        ts_codes=config.ts_codes,
+        codes=config.codes,
         start=config.start_date,
-        end=config.test_end,
-        tushare_token=config.tushare_token
+        end=config.test_end
     )
 
     # 合并所有股票数据
     all_dfs = []
-    for ts_code, df in stock_data_dict.items():
+    for code, df in stock_data_dict.items():
         df = df.copy()
-        df['ts_code'] = ts_code  # 添加股票代码列
+        df['code'] = code  # 添加股票代码列
         all_dfs.append(df)
 
     df_merged = pd.concat(all_dfs, ignore_index=True)
@@ -67,7 +66,7 @@ def main():
     logger.info("AlphaGPT 量化因子生成与回测系统启动")
     logger.info("=" * 60)
     logger.info(f"配置信息:")
-    logger.info(f"  - 股票代码: {config.ts_codes}")
+    logger.info(f"  - 股票代码: {config.codes}")
     logger.info(f"  - 数据日期范围: {config.start_date} ~ {config.test_end}")
     logger.info(f"  - 训练集截止: {config.end_date}")
     logger.info(f"  - 因子生成数量: {config.num_factors}")
@@ -82,7 +81,7 @@ def main():
     # Create output directory with subfolder structure: results/YYYY-MM-DD/stock_codes/
     output_dir = create_run_output_dir(
         base_dir="results",
-        ts_codes=config.ts_codes
+        codes=config.codes
     )
     logger.info(f"输出目录: {output_dir}")
 
@@ -129,19 +128,18 @@ def main():
     test_returns = np.clip(test_returns, -0.1, 0.1)
 
     # Initialize factor generator
-    print("\n初始化DeepSeek因子生成器...")
+    print("\n初始化Gemini因子生成器...")
     logger.info("初始化因子生成器...")
     factor_generator = FactorGenerator(
-        api_key=config.api_key,
-        base_url=config.base_url,
-        model=config.model,
-        use_api=config.use_api
+        api_key=config.gemini_api_key,
+        model=config.gemini_model,
+        proxy=config.gemini_proxy
     )
 
     # Generate factors
     print(f"\n生成量化因子...")
     logger.info(f"开始生成 {config.num_factors} 个因子...")
-    factor_exprs = factor_generator.generate_factors_with_deepseek(
+    factor_exprs = factor_generator.generate_factors_with_gemini(
         features,
         max_seq_len=config.max_seq_len,
         min_op_count=config.min_op_count,

@@ -16,9 +16,9 @@ class Config:
     # Tushare configuration
     tushare_token: Optional[str] = None  # Tushare API Token
 
-    # Data configuration - Tushare format
-    # 股票代码格式: 代码.交易所，例如 000001.SZ (平安银行)
-    ts_codes: List[str] = field(default_factory=lambda: ['000001.SZ'])  # 股票代码列表
+    # Data configuration - qlib format
+    # 股票代码格式: 代码.交易所，例如 SZ000001 (平安银行)
+    codes: List[str] = field(default_factory=lambda: ['SZ000001'])  # 股票代码列表
     start_date: str = '20200101'  # 开始日期 YYYYMMDD
     end_date: str = '20231231'    # 结束日期 YYYYMMDD
     test_end: str = '20231201'    # 测试集结束日期 YYYYMMDD
@@ -35,6 +35,12 @@ class Config:
     api_timeout: int = 60
     temperature: float = 0.7
     use_api: bool = True  # 是否使用 API（False 则使用本地生成）
+
+    # gemini API config
+    gemini_api_key: Optional[str] = None
+    gemini_model: Optional[str] = None
+    gemini_temperature: float = 0.7
+    gemini_proxy: Optional[str] = None
 
     # Backtest configuration
     position_scale: float = 0.3
@@ -80,13 +86,13 @@ class Config:
             # 数据配置
             if 'data' in yaml_config:
                 data_config = yaml_config['data']
-                # 支持 ts_codes (多标的) 或 ts_code (单标的)
-                if 'ts_codes' in data_config:
-                    config_dict['ts_codes'] = data_config['ts_codes']
-                elif 'ts_code' in data_config:
-                    config_dict['ts_codes'] = [data_config['ts_code']]
+                # 支持 codes (多标的) 或 code (单标的)
+                if 'codes' in data_config:
+                    config_dict['codes'] = data_config['codes']
+                elif 'code' in data_config:
+                    config_dict['codes'] = [data_config['code']]
                 else:
-                    config_dict['ts_codes'] = ['000001.SZ']
+                    config_dict['codes'] = ['SZ000001']
 
                 config_dict['start_date'] = data_config.get('start_date', '20200101')
                 config_dict['end_date'] = data_config.get('end_date', '20231231')
@@ -108,6 +114,15 @@ class Config:
                 config_dict['model'] = api_config.get('model', 'deepseek-chat')
                 config_dict['api_timeout'] = api_config.get('timeout', 60)
                 config_dict['temperature'] = api_config.get('temperature', 0.7)
+
+            # gemini配置
+            if 'gemini' in yaml_config:
+                gemini_config = yaml_config['gemini']
+                print('设置gemini api key: {}'.format(get_env_or_config('GEMINI_API_KEY', gemini_config.get('api_key'))))
+                config_dict['gemini_api_key'] = get_env_or_config('GEMINI_API_KEY', gemini_config.get('api_key'))
+                config_dict['gemini_model'] = gemini_config.get('model')
+                config_dict['gemini_temperature'] = gemini_config.get('temperature', 0.7)
+                config_dict['gemini_proxy'] = gemini_config.get('proxy', None)
 
             # 回测配置
             if 'backtest' in yaml_config:

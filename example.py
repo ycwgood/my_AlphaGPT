@@ -1,6 +1,6 @@
 """
-AlphaGPT Tushare 使用示例
-演示如何使用 Tushare 获取股票数据并进行因子分析
+AlphaGPT 使用示例
+演示如何使用 qlib 获取股票数据并进行因子分析
 """
 
 from alphagpt.config import Config
@@ -10,38 +10,29 @@ from alphagpt.factor import FactorGenerator, FactorCalculator
 import numpy as np
 
 
-def tushare_example():
-    """Tushare 数据获取示例"""
+def example():
+    """qlib 数据获取示例"""
 
     print("=" * 60)
-    print("AlphaGPT Tushare 使用示例")
+    print("AlphaGPT 使用示例")
     print("=" * 60)
 
     # 从 YAML 配置文件加载配置
     config = Config.from_yaml('config.yaml')
-
-    # 检查 Tushare Token 是否配置
-    if not config.tushare_token or config.tushare_token == "your_tushare_token_here":
-        print("\n⚠️  未配置 Tushare Token，将使用模拟数据")
-        print("请在 config.yaml 中配置:")
-        print("  tushare:")
-        print("    token: '你的Tushare Token'")
-        print("\n获取 Token: https://tushare.pro/register")
-        config.tushare_token = None
+    print(config)
 
     # 设置日志和随机种子
     logger = setup_logger(__name__)
     set_seed(42)
 
     # 加载数据
-    print(f"\n正在加载数据: {config.ts_codes[0]}")
+    print(f"\n正在加载数据: {config.codes[0]}")
     print(f"日期范围: {config.start_date} 到 {config.end_date}")
 
     df = DataLoader.get_price_data(
-        ts_code=config.ts_codes[0],
+        code=config.codes[0],
         start=config.start_date,
-        end=config.end_date,
-        tushare_token=config.tushare_token
+        end=config.end_date
     )
 
     if df is None or len(df) == 0:
@@ -59,8 +50,18 @@ def tushare_example():
 
     # 生成因子（使用本地生成器）
     print("\n正在生成因子...")
-    generator = FactorGenerator(use_api=False)
-    factor_exprs = generator.generate_factors_local(features, num_factors=10)
+    generator = FactorGenerator(
+        api_key=config.gemini_api_key,
+        model=config.gemini_model,
+        proxy=config.gemini_proxy
+    )
+    # factor_exprs = generator.generate_factors_local(features, num_factors=10)
+    factor_exprs = generator.generate_factors_with_gemini(
+        features,
+        max_seq_len=config.max_seq_len,
+        min_op_count=config.min_op_count,
+        num_factors=config.num_factors
+    )
 
     print(f"\n生成的因子表达式:")
     for i, expr in enumerate(factor_exprs, 1):
@@ -83,4 +84,4 @@ def tushare_example():
 
 
 if __name__ == "__main__":
-    tushare_example()
+    example()
