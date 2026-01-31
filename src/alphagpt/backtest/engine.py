@@ -42,8 +42,13 @@ class BacktestEngine:
             logger.error(f"{factor_name}: 因子值与测试集长度不匹配")
             return None
 
-        # Rolling window normalization (avoids look-ahead bias)
-        # Use shift(1) to ensure we only use historical data for normalization
+        # 1. 确保数组长度一致
+        min_len = min(len(factor_values), len(test_returns), len(test_df))
+        factor_values = factor_values[:min_len]
+        test_returns = test_returns[:min_len]
+        test_df = test_df.iloc[:min_len].reset_index(drop=True)
+
+        # 2. 滚动归一化（使用移位避免未来函数偏差）
         factor_series = pd.Series(factor_values)
         rolling_mean = factor_series.rolling(
             window=DEFAULT_ROLLING_WINDOW,
@@ -54,34 +59,45 @@ class BacktestEngine:
             min_periods=WARMUP_PERIOD
         ).std().shift(1)
 
-        # Vectorized normalization using shifted rolling stats
+        # 处理 NaN 值
+        rolling_mean = rolling_mean.fillna(0)
+        rolling_std = rolling_std.fillna(1)
+
+        # 3. 标准化因子值
         norm = (factor_values - rolling_mean.values) / (rolling_std.values + EPSILON)
+        norm = np.nan_to_num(norm, nan=0.0)
+        
+        # 4. 生成头寸（值域 [-1, 1]）
         positions = np.tanh(norm * POSITION_SCALE)
-
-        # Set warmup period to 0
+        
+        # 5. 预热期置零（前60天不交易）
         positions[:DEFAULT_ROLLING_WINDOW] = 0
-        positions = np.nan_to_num(positions, nan=0.0)
-
-        # Ensure same length
-        min_len = min(len(positions) - 1, len(test_returns))
-        positions = positions[:min_len + 1]
-        test_returns_adj = test_returns[:min_len]
-
-        # Strategy returns
-        strategy_returns = positions[:-1] * test_returns_adj
-
-        if len(strategy_returns) < MIN_SAMPLE_SIZE:
-            logger.warning(f"{factor_name}: 策略收益数据不足 ({len(strategy_returns)} 个样本)")
+        
+        # 关键修复：确保只在有效期计算收益
+        valid_idx = np.arange(DEFAULT_ROLLING_WINDOW, len(positions) - 1)
+        
+        if len(valid_idx) < MIN_SAMPLE_SIZE:
+            logger.warning(f"{factor_name}: 有效交易期不足")
             return None
-
-        # Calculate IC (Information Coefficient)
+        
+        # 6. 计算策略收益（只用有效期的头寸和收益）
+        strategy_positions = positions[valid_idx]
+        strategy_returns_adj = test_returns[valid_idx]
+        
+        # ✅ 关键：逐日收益 = 头寸 * 单日收益率（不是累乘！）
+        strategy_returns = strategy_positions * strategy_returns_adj
+        
+        # 7. 计算IC（使用对应的因子值和收益）
         ic = BacktestEngine.calculate_ic(
-            factor_values[:len(strategy_returns)],
-            test_returns_adj[:len(strategy_returns)]
+            factor_values[valid_idx],
+            strategy_returns_adj
         )
 
-        # Calculate metrics
-        cumulative = (1 + strategy_returns).cumprod()
+        # 8. 计算绩效指标
+        # 清理 NaN 和 inf 值
+        strategy_returns = np.nan_to_num(strategy_returns, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        cumulative = np.cumprod(1 + strategy_returns)  # 逐日复利
         total_return = cumulative[-1] - 1
 
         days = len(strategy_returns)
@@ -89,27 +105,23 @@ class BacktestEngine:
         annual_vol = np.std(strategy_returns) * np.sqrt(TRADING_DAYS_PER_YEAR)
         sharpe = annual_return / (annual_vol + EPSILON)
 
-        # Maximum drawdown
+        # 最大回撤
         running_max = np.maximum.accumulate(cumulative)
-        drawdown = (cumulative - running_max) / running_max
+        drawdown = (cumulative - running_max) / (running_max + EPSILON)
         max_dd = np.min(drawdown)
 
-        # Benchmark
-        benchmark_returns = test_returns_adj
-        benchmark_cumulative = (1 + benchmark_returns).cumprod()
-
-        # Information ratio
-        excess_returns = strategy_returns - benchmark_returns
+        # 基准收益（持有策略）
+        benchmark_cumulative = np.cumprod(1 + strategy_returns_adj)
+        
+        # 信息比率
+        excess_returns = strategy_returns - strategy_returns_adj
         info_ratio = np.mean(excess_returns) / (np.std(excess_returns) + EPSILON) * np.sqrt(TRADING_DAYS_PER_YEAR)
 
-        # Win rate
+        # 胜率
         win_rate = np.mean(strategy_returns > 0) * 100
 
-        # Calmar ratio
-        if max_dd < 0:
-            calmar = annual_return / abs(max_dd)
-        else:
-            calmar = 0
+        # 卡玛比率
+        calmar = annual_return / abs(max_dd) if max_dd < 0 else 0
 
         result = {
             'factor_name': factor_name,
@@ -122,11 +134,12 @@ class BacktestEngine:
             'win_rate': win_rate,
             'calmar': calmar,
             'ic': ic,
-            'positions': positions,
+            'positions': strategy_positions,
             'strategy_returns': strategy_returns,
             'cumulative': cumulative,
             'benchmark_cumulative': benchmark_cumulative,
-            'drawdown': drawdown
+            'drawdown': drawdown,
+            'num_trades': days
         }
 
         return result

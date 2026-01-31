@@ -103,12 +103,30 @@ def main():
     # Feature engineering
     logger.info("开始特征工程...")
     print("进行特征工程...")
-    train_df, features = FeatureEngineer.create_features(train_df_raw)
-    test_df, _ = FeatureEngineer.create_features(test_df_raw)
-
+    
+    # 按股票分别进行特征工程，保持时间序列连续性
+    train_dfs = []
+    test_dfs = []
+    
+    for code in config.codes:
+        # 按股票代码分别提取数据
+        train_df_code = train_df_raw[train_df_raw['code'] == code].copy()
+        test_df_code = test_df_raw[test_df_raw['code'] == code].copy()
+        
+        # 按股票分别进行特征计算（保持时间序列连续）
+        train_df_code, features = FeatureEngineer.create_features(train_df_code)
+        test_df_code, _ = FeatureEngineer.create_features(test_df_code)
+        
+        train_dfs.append(train_df_code)
+        test_dfs.append(test_df_code)
+    
+    # 特征工程后再合并
+    train_df = pd.concat(train_dfs, ignore_index=True)
+    test_df = pd.concat(test_dfs, ignore_index=True)
+    
     features = [f for f in features if f in train_df.columns and f in test_df.columns]
-    train_df = train_df[['trade_date', 'close'] + features].copy()
-    test_df = test_df[['trade_date', 'close'] + features].copy()
+    train_df = train_df[['trade_date', 'code', 'close'] + features].copy()
+    test_df = test_df[['trade_date', 'code', 'close'] + features].copy()
 
     logger.info(f"特征工程完成: 生成 {len(features)} 个特征")
     logger.info(f"训练集: {len(train_df)} 样本 ({train_df['trade_date'].min()} ~ {train_df['trade_date'].max()})")
@@ -118,13 +136,34 @@ def main():
     print(f"测试集: {len(test_df)} 个样本 ({test_df['trade_date'].min()} 到 {test_df['trade_date'].max()})")
     print(f"特征: {', '.join(features)}")
 
-    # Calculate target returns
+    # Calculate target returns - 按股票分别计算，避免跨越不同股票
     train_returns = np.zeros(len(train_df))
-    train_returns[:-1] = train_df['close'].values[1:] / train_df['close'].values[:-1] - 1
-    train_returns = np.clip(train_returns, -0.1, 0.1)
-
     test_returns = np.zeros(len(test_df))
-    test_returns[:-1] = test_df['close'].values[1:] / test_df['close'].values[:-1] - 1
+    
+    # 按股票代码分别计算收益率
+    for code in config.codes:
+        # 训练集
+        train_mask = train_df['code'] == code
+        train_idx = np.where(train_mask)[0]
+        if len(train_idx) > 1:
+            # 只在同一股票内计算相邻价格的收益率
+            train_prices = train_df.loc[train_mask, 'close'].values
+            train_ret = np.zeros(len(train_prices))
+            train_ret[:-1] = train_prices[1:] / train_prices[:-1] - 1
+            train_returns[train_idx] = train_ret
+        
+        # 测试集
+        test_mask = test_df['code'] == code
+        test_idx = np.where(test_mask)[0]
+        if len(test_idx) > 1:
+            # 只在同一股票内计算相邻价格的收益率
+            test_prices = test_df.loc[test_mask, 'close'].values
+            test_ret = np.zeros(len(test_prices))
+            test_ret[:-1] = test_prices[1:] / test_prices[:-1] - 1
+            test_returns[test_idx] = test_ret
+    
+    # 裁剪极端值
+    train_returns = np.clip(train_returns, -0.1, 0.1)
     test_returns = np.clip(test_returns, -0.1, 0.1)
 
     # Initialize factor generator
@@ -195,14 +234,51 @@ def main():
             factor_values_test = calculator.calculate_factor_value(expr, test_feature_data)
 
             if factor_values_test is not None and len(factor_values_test) == len(test_df):
-                # Backtest strategy
-                result = BacktestEngine.backtest_strategy(
-                    factor_values_test, test_df, test_returns, factor_name
-                )
-
-                if result is not None:
+                # Backtest strategy - 按股票分别回测后聚合结果
+                all_results = []
+                
+                for code in config.codes:
+                    code_mask = test_df['code'] == code
+                    code_idx = np.where(code_mask)[0]
+                    
+                    if len(code_idx) < 60:  # 至少需要60个交易日
+                        continue
+                    
+                    # 按股票提取对应的因子值和收益
+                    code_factor_values = factor_values_test[code_idx]
+                    code_test_df = test_df.iloc[code_idx].reset_index(drop=True)
+                    code_test_returns = test_returns[code_idx]
+                    
+                    # 按股票回测
+                    code_result = BacktestEngine.backtest_strategy(
+                        code_factor_values, code_test_df, code_test_returns, f"{factor_name}_{code}"
+                    )
+                    
+                    if code_result is not None:
+                        all_results.append(code_result)
+                
+                # 聚合多只股票的回测结果
+                if all_results:
+                    # 取平均夏普比率
+                    avg_sharpe = np.mean([r['sharpe'] for r in all_results])
+                    avg_annual_return = np.mean([r['annual_return'] for r in all_results])
+                    avg_max_dd = np.mean([r['max_drawdown'] for r in all_results])
+                    
+                    result = {
+                        'factor_name': factor_name,
+                        'sharpe': avg_sharpe,
+                        'annual_return': avg_annual_return,
+                        'annual_vol': np.mean([r['annual_vol'] for r in all_results]),
+                        'max_drawdown': avg_max_dd,
+                        'total_return': avg_annual_return,  # 使用年化收益代替
+                        'info_ratio': np.mean([r['info_ratio'] for r in all_results]),
+                        'win_rate': np.mean([r['win_rate'] for r in all_results]),
+                        'calmar': np.mean([r['calmar'] for r in all_results]),
+                        'ic': np.mean([r['ic'] for r in all_results if not np.isnan(r['ic'])])
+                    }
+                    
                     results[factor_name] = result
-                    print(f"测试集夏普比率: {result['sharpe']:.3f}")
+                    print(f"测试集夏普比率: {result['sharpe']:.3f} (平均 {len(all_results)} 只股票)")
                     logger.info(f"  测试集夏普比率: {result['sharpe']:.3f}, 年化收益: {result['annual_return']:.2%}, 最大回撤: {result['max_drawdown']:.2%}")
 
                     # Update best factor
